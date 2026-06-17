@@ -88,7 +88,9 @@ import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { AuthDialog } from '@/components/auth-dialog';
 
-type ModelId = 'googleai/gemini-2.5-flash' | 'googleai/gemini-2.5-pro';
+type ModelId = 'googleai/gemini-3.5-flash' | 'googleai/gemini-3.1-flash-lite' | 'googleai/gemma-4-31b-it';
+
+const VALID_MODELS: ModelId[] = ['googleai/gemini-3.5-flash', 'googleai/gemini-3.1-flash-lite', 'googleai/gemma-4-31b-it'];
 
 type StepDescription = {
   isLoading: boolean;
@@ -169,7 +171,7 @@ function RecipeSavvyContent() {
 
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [isApiKeyMissing, setIsApiKeyMissing] = useState(false);
-  const [model, setModel] = useState<ModelId>('googleai/gemini-2.5-pro');
+  const [model, setModel] = useState<ModelId>('googleai/gemini-3.5-flash');
 
   const [currentStep, setCurrentStep] = useState(0);
   const [stepDescriptionsCache, setStepDescriptionsCache] = useState<Record<number, StepDescription>>({});
@@ -352,8 +354,11 @@ function RecipeSavvyContent() {
     }
 
     const storedModel = localStorage.getItem('geminiModel') as ModelId;
-    if (storedModel) {
+    if (storedModel && VALID_MODELS.includes(storedModel)) {
       setModel(storedModel);
+    } else if (storedModel) {
+      // Old/retired model saved (e.g. gemini-2.5-*). Reset to default.
+      localStorage.removeItem('geminiModel');
     }
     
     const storedTips = localStorage.getItem('shownTips');

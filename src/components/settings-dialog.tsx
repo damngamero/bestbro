@@ -24,7 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs"
 import { useAuth } from "@/hooks/use-auth"
 import { Separator } from "./ui/separator"
 
-type ModelId = 'googleai/gemini-2.5-flash' | 'googleai/gemini-2.5-pro';
+type ModelId = 'googleai/gemini-3.5-flash' | 'googleai/gemini-3.1-flash-lite' | 'googleai/gemma-4-31b-it';
 
 interface SettingsDialogProps {
     isOpen: boolean;
@@ -207,12 +207,16 @@ export function SettingsDialog({ isOpen, onOpenChange, apiKey, onApiKeyChange, m
                     className="flex gap-4 pt-2"
                   >
                     <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="googleai/gemini-2.5-pro" id="gemini-pro" />
+                        <RadioGroupItem value="googleai/gemini-3.5-flash" id="gemini-pro" />
                         <Label htmlFor="gemini-pro">Pro</Label>
                     </div>
                     <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="googleai/gemini-2.5-flash" id="gemini-flash" />
+                        <RadioGroupItem value="googleai/gemini-3.1-flash-lite" id="gemini-flash" />
                         <Label htmlFor="gemini-flash">Flash</Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="googleai/gemma-4-31b-it" id="gemma-flash-lite" />
+                        <Label htmlFor="gemma-flash-lite">Flash Lite</Label>
                     </div>
                   </RadioGroup>
               </div>
