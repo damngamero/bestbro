@@ -8,7 +8,7 @@
  * - GenerateRecipesFromIngredientsOutput - The return type for the generateRecipesFromIngredients function.
  */
 
-import { getAi } from '@/ai/genkit';
+import { getAi, withGrounding } from '@/ai/genkit';
 import {z} from 'genkit';
 import {ModelId} from '@genkit-ai/googleai';
 
@@ -55,6 +55,7 @@ Ingredients:
 
   const {output} = await prompt(input, {
     model: input.model as ModelId,
+    config: withGrounding(input.model),
   });
   return output!;
 }

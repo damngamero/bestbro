@@ -4,7 +4,7 @@
  * @fileOverview Provides troubleshooting advice for a specific cooking step.
  */
 
-import { getAi } from '@/ai/genkit';
+import { getAi, withGrounding } from '@/ai/genkit';
 import { z } from 'genkit';
 import {ModelId} from '@genkit-ai/googleai';
 
@@ -41,6 +41,7 @@ Provide clear, concise, and encouraging advice to help them fix the problem and 
     const {output} = await ai.generate({
       prompt,
       model: model as ModelId,
+      config: withGrounding(model),
       output: { schema: TroubleshootStepOutputSchema },
     });
     

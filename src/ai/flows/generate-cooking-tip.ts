@@ -4,7 +4,7 @@
  * @fileOverview Generates a random, useful tip about the application's functionality.
  */
 
-import { getAi } from '@/ai/genkit';
+import { getAi, withGrounding } from '@/ai/genkit';
 import { z } from 'zod';
 import { ModelId } from '@genkit-ai/googleai';
 
@@ -68,6 +68,7 @@ Please provide one new, unique, and helpful tip about using the app. Frame it as
     const { output } = await ai.generate({
       prompt: promptText,
       model: model as ModelId,
+      config: withGrounding(model),
       output: { schema: GenerateCookingTipOutputSchema },
     });
 

@@ -4,7 +4,7 @@
  * @fileOverview Generates a variation of a recipe based on user preferences.
  */
 
-import { getAi } from '@/ai/genkit';
+import { getAi, withGrounding } from '@/ai/genkit';
 import { z } from 'zod';
 import { ModelId } from '@genkit-ai/googleai';
 
@@ -65,6 +65,7 @@ If it is not possible to create a good-tasting recipe with these changes, please
     const { output } = await ai.generate({
       prompt: promptText,
       model: model as ModelId,
+      config: withGrounding(model),
       output: { schema: RecipeVariationOutputSchema },
     });
     

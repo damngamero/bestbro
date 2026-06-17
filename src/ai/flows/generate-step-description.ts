@@ -4,7 +4,7 @@
  * @fileOverview Generates a description for a specific cooking step.
  */
 
-import { getAi } from '@/ai/genkit';
+import { getAi, withGrounding } from '@/ai/genkit';
 import { z } from 'zod';
 import {ModelId} from '@genkit-ai/googleai';
 
@@ -39,6 +39,7 @@ Provide a concise, two-sentence description of what the food should look like at
   const { output } = await ai.generate({
     prompt,
     model: model as ModelId,
+    config: withGrounding(model),
     output: { schema: GenerateStepDescriptionOutputSchema },
   });
 

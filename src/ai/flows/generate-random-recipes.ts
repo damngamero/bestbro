@@ -5,7 +5,7 @@
  * @fileOverview Generates one or more random, easy-to-make recipe names.
  */
 
-import { getAi } from '@/ai/genkit';
+import { getAi, withGrounding } from '@/ai/genkit';
 import { z } from 'zod';
 import { ModelId } from '@genkit-ai/googleai';
 
@@ -34,6 +34,7 @@ export async function generateRandomRecipes(
   const { output } = await ai.generate({
     prompt,
     model: model as ModelId,
+    config: withGrounding(model),
     output: { schema: GenerateRandomRecipesOutputSchema },
   });
 

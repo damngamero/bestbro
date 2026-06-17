@@ -1,6 +1,6 @@
 'use server';
 
-import { getAi } from '@/ai/genkit';
+import { getAi, withGrounding } from '@/ai/genkit';
 import {z} from 'genkit';
 import {ModelId} from '@genkit-ai/googleai';
 
@@ -44,6 +44,7 @@ export async function generateRecipeDetails(
   const {output} = await ai.generate({
     prompt: prompt,
     model: input.model as ModelId,
+    config: withGrounding(input.model),
     output: { schema: RecipeDetailsOutputSchema },
   });
   return output!;

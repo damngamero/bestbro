@@ -4,7 +4,7 @@
  * @fileOverview Identifies which cooking steps have a time component.
  */
 
-import { getAi } from '@/ai/genkit';
+import { getAi, withGrounding } from '@/ai/genkit';
 import { z } from 'zod';
 import {ModelId} from '@genkit-ai/googleai';
 
@@ -43,6 +43,7 @@ If a step has a range (e.g., 10-15 minutes), use the average. If a step mentions
   const { output } = await ai.generate({
     prompt,
     model: model as ModelId,
+    config: withGrounding(model),
     output: { schema: IdentifyTimedStepsOutputSchema },
   });
 

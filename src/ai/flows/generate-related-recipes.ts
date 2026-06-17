@@ -4,7 +4,7 @@
  * @fileOverview Generates a list of recipes related to a given recipe.
  */
 
-import { getAi } from '@/ai/genkit';
+import { getAi, withGrounding } from '@/ai/genkit';
 import { z } from 'zod';
 import {ModelId} from '@genkit-ai/googleai';
 
@@ -33,6 +33,7 @@ export async function generateRelatedRecipes(
   const { output } = await ai.generate({
     prompt,
     model: model as ModelId,
+    config: withGrounding(model),
     output: { schema: GenerateRelatedRecipesOutputSchema },
   });
     
