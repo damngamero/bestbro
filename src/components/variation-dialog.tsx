@@ -108,7 +108,7 @@ export function VariationDialog({
         // Instead of setting state, just call the callback directly
         onVariationCreated({
             name: result.newRecipe.name,
-            details: result.newRecipe as RecipeDetailsOutput,
+            details: result.newRecipe as unknown as RecipeDetailsOutput,
         }, recipeName);
       } else {
         toast({

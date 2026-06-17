@@ -7,13 +7,14 @@ export async function POST(request: NextRequest) {
   try {
     // Get the data from the request sent by the frontend
     const body = await request.json();
-    const { ingredients, halalMode, allergens, maxCookTime, apiKey, model } = body;
+    const { ingredients, halalMode, allergens, diets, maxCookTime, apiKey, model } = body;
 
     // Call your original AI flow function securely on the server
     const result = await generateRecipesFromIngredients({
       ingredients,
       halalMode,
       allergens,
+      diets,
       maxCookTime,
       apiKey,
       model,

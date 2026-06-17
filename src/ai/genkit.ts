@@ -27,6 +27,46 @@ export function withGrounding(
   return config;
 }
 
+// Selectable models, in fallback priority order. If the chosen model is
+// rate-limited we transparently retry on the next one.
+export const FALLBACK_ORDER = [
+  'googleai/gemini-3.5-flash',
+  'googleai/gemini-3.1-flash-lite',
+];
+
+function isRateLimitError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    msg.includes('429') ||
+    msg.includes('rate limit') ||
+    msg.includes('quota') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('too many requests')
+  );
+}
+
+/**
+ * Runs an ai.generate-style call for `model`; if it fails with a rate-limit
+ * error, retries once per remaining model in FALLBACK_ORDER. `run` receives the
+ * model id actually being attempted.
+ */
+export async function generateWithFallback<T>(
+  model: string,
+  run: (model: string) => Promise<T>
+): Promise<T> {
+  const order = [model, ...FALLBACK_ORDER.filter(m => m !== model)];
+  let lastErr: unknown;
+  for (const m of order) {
+    try {
+      return await run(m);
+    } catch (err) {
+      lastErr = err;
+      if (!isRateLimitError(err)) throw err;
+    }
+  }
+  throw lastErr;
+}
+
 export async function getAi(apiKey?: string | null): Promise<Genkit> {
   const key = apiKey || process.env.GEMINI_API_KEY || '';
 

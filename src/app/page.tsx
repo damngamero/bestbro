@@ -66,6 +66,12 @@ import {
   User as UserIcon,
   LogOut,
   LogIn,
+  Camera,
+  Minus,
+  Flame,
+  Upload,
+  Users,
+  RotateCcw,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { SettingsDialog } from '@/components/settings-dialog';
@@ -137,6 +143,9 @@ function RecipeSavvyContent() {
   const [useAllergens, setUseAllergens] = useState(false);
   const [allergens, setAllergens] = useState<string[]>([]);
   const [maxCookTime, setMaxCookTime] = useState<string>('');
+  const [diets, setDiets] = useState<string[]>([]);
+  // Ingredient unit display: false = recipe's original (US), true = metric.
+  const [useMetric, setUseMetric] = useState(false);
 
   const [generatedRecipes, setGeneratedRecipes] = useState<string[]>([]);
   const [isGeneratingRecipes, setIsGeneratingRecipes] = useState(false);
@@ -197,6 +206,16 @@ function RecipeSavvyContent() {
     duration: number;
   }>({ isActive: false, remaining: 0, duration: 0 });
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const [isScanningPantry, setIsScanningPantry] = useState(false);
+  const pantryInputRef = useRef<HTMLInputElement | null>(null);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [capturedShots, setCapturedShots] = useState<string[]>([]);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  // Desired servings target (null = follow each recipe's own serving count).
+  // Settable from the entry menus and the recipe details view.
+  const [desiredServings, setDesiredServings] = useState<number | null>(null);
 
   const [shownTips, setShownTips] = useState<string[]>([]);
   const [tipCountLast30Min, setTipCountLast30Min] = useState(0);
@@ -360,6 +379,12 @@ function RecipeSavvyContent() {
       // Old/retired model saved (e.g. gemini-2.5-*). Reset to default.
       localStorage.removeItem('geminiModel');
     }
+
+    const storedDiets = localStorage.getItem('dietTags');
+    if (storedDiets) {
+      try { setDiets(JSON.parse(storedDiets)); } catch {}
+    }
+    setUseMetric(localStorage.getItem('useMetric') === 'true');
     
     const storedTips = localStorage.getItem('shownTips');
     if (storedTips) {
@@ -485,6 +510,131 @@ function RecipeSavvyContent() {
     setIngredients(ingredients.filter(i => i !== ingredientToRemove));
   };
 
+  const DIET_OPTIONS = ['Vegan', 'Vegetarian', 'Keto', 'Low-carb', 'Gluten-free', 'Dairy-free'];
+
+  const toggleDiet = (diet: string) => {
+    setDiets(prev => {
+      const next = prev.includes(diet) ? prev.filter(d => d !== diet) : [...prev, diet];
+      localStorage.setItem('dietTags', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const toggleMetric = () => {
+    setUseMetric(prev => {
+      localStorage.setItem('useMetric', String(!prev));
+      return !prev;
+    });
+  };
+
+  // --- Pantry photo scan -------------------------------------------------
+  const fileToDataUri = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+  // Scans one or more images (from upload or camera) in a single request.
+  const scanPantryImages = async (dataUris: string[]) => {
+    if (dataUris.length === 0) return;
+    if (!ensureApiKey()) return;
+    setIsScanningPantry(true);
+    try {
+      const res = await fetch('/api/scan-pantry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ photoDataUris: dataUris, apiKey, model }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || `scan failed (${res.status})`);
+      }
+      const { ingredients: found } = (await res.json()) as { ingredients: string[] };
+
+      const additions = (found || [])
+        .map(i => i.trim().toLowerCase())
+        .filter((i, idx, arr) => i && arr.indexOf(i) === idx && !ingredients.includes(i));
+
+      if (additions.length > 0) {
+        setIngredients(prev => [...prev, ...additions]);
+        toast({ title: 'Pantry scanned', description: `Added ${additions.length} ingredient(s) from ${dataUris.length} photo(s).` });
+      } else {
+        toast({ title: 'Pantry scanned', description: 'No new ingredients found.' });
+      }
+    } catch (e: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Scan failed',
+        description: e?.message ? String(e.message) : 'Could not read ingredients from those photos.',
+        duration: 12000,
+      });
+    } finally {
+      setIsScanningPantry(false);
+    }
+  };
+
+  const handleScanFiles = async (files: FileList) => {
+    const dataUris = await Promise.all(Array.from(files).map(fileToDataUri));
+    await scanPantryImages(dataUris);
+  };
+
+  // --- Webcam capture (desktop + mobile) ---------------------------------
+  const stopCameraStream = () => {
+    cameraStreamRef.current?.getTracks().forEach(t => t.stop());
+    cameraStreamRef.current = null;
+  };
+
+  const openCamera = async () => {
+    if (!ensureApiKey()) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      toast({ variant: 'destructive', title: 'No camera', description: 'This browser has no camera access.' });
+      return;
+    }
+    setCapturedShots([]);
+    setIsCameraOpen(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+      });
+      cameraStreamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => {});
+      }
+    } catch (e) {
+      setIsCameraOpen(false);
+      toast({ variant: 'destructive', title: 'Camera blocked', description: 'Allow camera access to use this.' });
+    }
+  };
+
+  const closeCamera = () => {
+    stopCameraStream();
+    setIsCameraOpen(false);
+    setCapturedShots([]);
+  };
+
+  const captureShot = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    setCapturedShots(prev => [...prev, canvas.toDataURL('image/jpeg', 0.8)]);
+  };
+
+  const finishCamera = async () => {
+    const shots = capturedShots;
+    stopCameraStream();
+    setIsCameraOpen(false);
+    if (shots.length > 0) await scanPantryImages(shots);
+    setCapturedShots([]);
+  };
+
   const ensureApiKey = useCallback((showAlert = true) => {
     if (!apiKey) {
       if (showAlert) {
@@ -547,6 +697,20 @@ function RecipeSavvyContent() {
         return;
       }
       
+      // Cache: identical request (name + model + halal + allergens + diets) is
+      // reused to avoid spending an API call on a dish we already generated.
+      const cacheKey = `recipeCache:${recipeName}|${model}|${isHalal ? 'halal' : 'any'}|${
+        useAllergens ? allergens.slice().sort().join(',') : ''
+      }|${diets.slice().sort().join(',')}`;
+      try {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          setRecipeDetails({ isLoading: false, data: parsed.data, error: null, timedSteps: parsed.timedSteps });
+          return;
+        }
+      } catch {}
+
       try {
         setRecipeDetails({ isLoading: true, data: null, error: null, timedSteps: [] });
         const detailsResponse = await fetch('/api/recipe-details', {
@@ -556,6 +720,7 @@ function RecipeSavvyContent() {
               recipeName,
               halalMode: isHalal,
               allergens: useAllergens ? allergens : undefined,
+              diets: diets.length > 0 ? diets : undefined,
               apiKey,
               model,
             }),
@@ -576,8 +741,11 @@ function RecipeSavvyContent() {
         
         if (!timedStepsResponse.ok) throw new Error(`API Error: ${timedStepsResponse.statusText}`);
         const timedStepsResult = await timedStepsResponse.json();
-        
+
         setRecipeDetails({ isLoading: false, data: details, error: null, timedSteps: timedStepsResult.timedSteps });
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify({ data: details, timedSteps: timedStepsResult.timedSteps }));
+        } catch {}
       } catch (error) {
         console.error(error);
         setRecipeDetails({
@@ -593,7 +761,7 @@ function RecipeSavvyContent() {
         });
       }
     },
-    [apiKey, isHalal, useAllergens, allergens, toast, cookbook, ensureApiKey, model]
+    [apiKey, isHalal, useAllergens, allergens, diets, toast, cookbook, ensureApiKey, model]
   );
   
   const handleGetRecipeFromName = useCallback(async () => {
@@ -640,6 +808,7 @@ function RecipeSavvyContent() {
           ingredients,
           halalMode: isHalal,
           allergens: useAllergens ? allergens : undefined,
+          diets: diets.length > 0 ? diets : undefined,
           maxCookTime: isNaN(time) ? undefined : time,
           apiKey: apiKey!,
           model,
@@ -670,7 +839,7 @@ function RecipeSavvyContent() {
     } finally {
       setIsGeneratingRecipes(false);
     }
-  }, [ingredients, isHalal, useAllergens, allergens, maxCookTime, apiKey, toast, ensureApiKey, model]);
+  }, [ingredients, isHalal, useAllergens, allergens, diets, maxCookTime, apiKey, toast, ensureApiKey, model]);
 
   const handleSurpriseMe = useCallback(async () => {
     if (!ensureApiKey()) return;
@@ -935,8 +1104,42 @@ function RecipeSavvyContent() {
     setStepDescriptionsCache({});
   }
 
+  const timerDoneRef = useRef(false);
+
+  const notifyTimerDone = useCallback(() => {
+    // Audible beep (no asset needed).
+    try {
+      const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+      if (Ctx) {
+        const ctx = new Ctx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.001, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.05);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.2);
+        osc.start();
+        osc.stop(ctx.currentTime + 1.2);
+      }
+    } catch {}
+
+    // Desktop notification (falls back to a toast if not permitted).
+    const body = selectedRecipe
+      ? `Timer for "${selectedRecipe}" is up!`
+      : 'Your cooking timer is up!';
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      try {
+        new Notification('⏲️ Timer done', { body });
+      } catch {}
+    }
+    toast({ title: '⏲️ Timer done', description: body });
+  }, [selectedRecipe, toast]);
+
   useEffect(() => {
     if (timer.isActive && timer.remaining > 0) {
+      timerDoneRef.current = false;
       timerIntervalRef.current = setInterval(() => {
         setTimer(t => ({ ...t, remaining: t.remaining - 1 }));
       }, 1000);
@@ -945,13 +1148,23 @@ function RecipeSavvyContent() {
         clearInterval(timerIntervalRef.current);
         timerIntervalRef.current = null;
       }
+      // Fire the alert exactly once when the countdown reaches zero.
+      if (!timerDoneRef.current) {
+        timerDoneRef.current = true;
+        notifyTimerDone();
+      }
     }
     return () => {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     };
-  }, [timer.isActive, timer.remaining]);
+  }, [timer.isActive, timer.remaining, notifyTimerDone]);
 
   const startTimer = (durationInMinutes: number) => {
+    // Ask for notification permission up front so the completion alert can show.
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+    timerDoneRef.current = false;
     setTimer({
       isActive: true,
       duration: durationInMinutes * 60,
@@ -968,6 +1181,104 @@ function RecipeSavvyContent() {
     const secs = seconds % 60;
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
+
+  // Scale an ingredient line by multiplying its leading numeric quantity
+  // (including simple fractions like "1/2") by `ratio`. Lines without a
+  // leading number are returned unchanged.
+  const scaleIngredient = (line: string, ratio: number): string => {
+    if (ratio === 1) return line;
+    return line.replace(/^\s*(\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?)/, (match) => {
+      let value: number;
+      if (match.includes('/')) {
+        const parts = match.trim().split(/\s+/);
+        if (parts.length === 2) {
+          const [n, d] = parts[1].split('/').map(Number);
+          value = Number(parts[0]) + n / d;
+        } else {
+          const [n, d] = parts[0].split('/').map(Number);
+          value = n / d;
+        }
+      } else {
+        value = parseFloat(match);
+      }
+      const scaled = value * ratio;
+      const rounded = Math.round(scaled * 100) / 100;
+      return String(rounded);
+    });
+  };
+
+  // Stop the webcam if the component unmounts while the camera is open.
+  useEffect(() => {
+    return () => {
+      cameraStreamRef.current?.getTracks().forEach(t => t.stop());
+    };
+  }, []);
+
+  // Approximate US -> metric conversion for ingredient amounts and oven temps.
+  // Volume units become ml, weight units become g, and °F becomes °C.
+  const convertToMetric = (text: string): string => {
+    if (!useMetric) return text;
+    let out = text;
+    const round = (n: number) => Math.round(n);
+
+    // Volume + weight units (value immediately before the unit word).
+    const factors: [RegExp, number, string][] = [
+      [/(\d+(?:\.\d+)?)\s*(?:cups?)\b/gi, 240, 'ml'],
+      [/(\d+(?:\.\d+)?)\s*(?:tablespoons?|tbsp)\b/gi, 15, 'ml'],
+      [/(\d+(?:\.\d+)?)\s*(?:teaspoons?|tsp)\b/gi, 5, 'ml'],
+      [/(\d+(?:\.\d+)?)\s*(?:pounds?|lbs?)\b/gi, 454, 'g'],
+      [/(\d+(?:\.\d+)?)\s*(?:ounces?|oz)\b/gi, 28, 'g'],
+    ];
+    for (const [re, factor, unit] of factors) {
+      out = out.replace(re, (_m, num) => `${round(parseFloat(num) * factor)} ${unit}`);
+    }
+    // Oven temperatures: "350°F", "350 F", "350 degrees F".
+    out = out.replace(/(\d+)\s*(?:°\s*F|degrees?\s*F|F)\b/g, (_m, num) => `${round((parseFloat(num) - 32) * 5 / 9)}°C`);
+    return out;
+  };
+
+  // Reusable, compact servings picker. "Auto" follows each recipe's own count.
+  // "+" counts up from Auto (1, 2, 3...); "-" only steps down once a number is
+  // set and never goes below 1. The reset icon returns to Auto.
+  const ServingsControl = ({ className = '' }: { className?: string }) => (
+    <div className={`inline-flex items-center gap-1 ${className}`} title="Servings">
+      <Users className="h-3.5 w-3.5 text-muted-foreground" />
+      <Button
+        type="button"
+        variant="outline"
+        size="icon"
+        className="h-6 w-6"
+        disabled={desiredServings == null}
+        onClick={() => setDesiredServings(s => (s == null ? null : Math.max(1, s - 1)))}
+      >
+        <Minus className="h-3 w-3" />
+      </Button>
+      <span className="w-9 text-center text-xs font-medium tabular-nums">
+        {desiredServings ?? 'Auto'}
+      </span>
+      <Button
+        type="button"
+        variant="outline"
+        size="icon"
+        className="h-6 w-6"
+        onClick={() => setDesiredServings(s => (s ?? 0) + 1)}
+      >
+        <Plus className="h-3 w-3" />
+      </Button>
+      {desiredServings != null && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6"
+          title="Reset to recipe default"
+          onClick={() => setDesiredServings(null)}
+        >
+          <RotateCcw className="h-3 w-3" />
+        </Button>
+      )}
+    </div>
+  );
 
   const parseTime = (timeString: string): number => {
       let totalMinutes = 0;
@@ -1013,9 +1324,15 @@ function RecipeSavvyContent() {
           <Button onClick={() => setShowCookbook(false)} variant="ghost" className="mb-4">
               <ArrowLeft className="mr-2 h-4 w-4" /> Back to Search
           </Button>
-          <h2 className="text-3xl font-headline text-center mb-6">
+          <h2 className="text-2xl sm:text-3xl font-headline text-center mb-6">
               My Cookbook
           </h2>
+
+          {cookbook.length > 0 && (
+            <div className="flex justify-center mb-6">
+              <ServingsControl />
+            </div>
+          )}
 
           {cookbook.length === 0 ? (
             <Card className="text-center p-8 border-dashed">
@@ -1085,7 +1402,7 @@ function RecipeSavvyContent() {
           <Button onClick={() => setShowVariationBook(false)} variant="ghost" className="mb-4">
               <ArrowLeft className="mr-2 h-4 w-4" /> Back to Search
           </Button>
-          <h2 className="text-3xl font-headline text-center mb-6">
+          <h2 className="text-2xl sm:text-3xl font-headline text-center mb-6">
               My Variation Book
           </h2>
            {variationBook.length === 0 ? (
@@ -1203,12 +1520,48 @@ function RecipeSavvyContent() {
                         <Button
                             variant="outline"
                             onClick={() => setIsIngredientsDialogOpen(true)}
-                            className="w-full justify-start h-auto py-3 text-muted-foreground font-normal mb-4"
+                            className="w-full justify-start h-auto py-3 text-muted-foreground font-normal mb-2"
                             disabled={isFeatureLocked}
                         >
                             <Plus className="mr-2" />
                             <span>Add Ingredients...</span>
                         </Button>
+                        <input
+                            ref={pantryInputRef}
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={e => {
+                              const files = e.target.files;
+                              if (files && files.length > 0) handleScanFiles(files);
+                              e.target.value = '';
+                            }}
+                        />
+                        <div className="grid grid-cols-2 gap-2 mb-4">
+                          <Button
+                              variant="outline"
+                              onClick={() => pantryInputRef.current?.click()}
+                              className="h-auto py-3 text-muted-foreground font-normal"
+                              disabled={isFeatureLocked || isScanningPantry}
+                          >
+                              {isScanningPantry ? (
+                                <LoaderCircle className="mr-2 animate-spin" />
+                              ) : (
+                                <Upload className="mr-2" />
+                              )}
+                              <span>{isScanningPantry ? 'Scanning...' : 'Upload photos'}</span>
+                          </Button>
+                          <Button
+                              variant="outline"
+                              onClick={openCamera}
+                              className="h-auto py-3 text-muted-foreground font-normal"
+                              disabled={isFeatureLocked || isScanningPantry}
+                          >
+                              <Camera className="mr-2" />
+                              <span>Use camera</span>
+                          </Button>
+                        </div>
                         <div className="flex flex-wrap gap-2">
                           {ingredients.map(ingredient => (
                             <Badge
@@ -1281,7 +1634,8 @@ function RecipeSavvyContent() {
                     </Card>
                   </TabsContent>
                 </Tabs>
-                <div className="flex flex-wrap items-center space-x-4 mt-4">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-4">
+                  <ServingsControl />
                   <div className="flex items-center space-x-2">
                     <Switch id="halal-mode" checked={isHalal} onCheckedChange={setIsHalal} disabled={isFeatureLocked}/>
                     <Label htmlFor="halal-mode">Halal Mode</Label>
@@ -1309,6 +1663,22 @@ function RecipeSavvyContent() {
                       disabled={isFeatureLocked}
                     />
                   </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 mt-3">
+                  <span className="text-sm text-muted-foreground mr-1">Diet:</span>
+                  {DIET_OPTIONS.map(diet => (
+                    <Button
+                      key={diet}
+                      type="button"
+                      size="sm"
+                      variant={diets.includes(diet) ? 'default' : 'outline'}
+                      className="h-7 rounded-full px-3 text-xs"
+                      onClick={() => toggleDiet(diet)}
+                      disabled={isFeatureLocked}
+                    >
+                      {diet}
+                    </Button>
+                  ))}
                 </div>
               </CardContent>
               <CardFooter className="flex-col sm:flex-row gap-2">
@@ -1372,7 +1742,7 @@ function RecipeSavvyContent() {
                 
                 {!isGeneratingRecipes && generatedRecipes.length === 0 && (
                   <motion.div>
-                     <h2 className="text-3xl font-headline text-center mb-6">
+                     <h2 className="text-2xl sm:text-3xl font-headline text-center mb-6">
                       Or, Try One of These Recipes!
                     </h2>
                     {isGeneratingSuggestions && (
@@ -1412,7 +1782,7 @@ function RecipeSavvyContent() {
                     animate={{ opacity: 1 }}
                     transition={{ delay: 0.2 }}
                   >
-                    <h2 className="text-3xl font-headline text-center mb-6">
+                    <h2 className="text-2xl sm:text-3xl font-headline text-center mb-6">
                       Here's What You Can Make
                     </h2>
 
@@ -1466,7 +1836,7 @@ function RecipeSavvyContent() {
               <CardHeader>
                 <div className="flex justify-between items-start gap-4">
                   <div className="flex-1">
-                    <CardTitle className="font-headline text-3xl">
+                    <CardTitle className="font-headline text-2xl sm:text-3xl">
                       {selectedRecipe}
                     </CardTitle>
                     {recipeDetails.data && (
@@ -1551,13 +1921,86 @@ function RecipeSavvyContent() {
                         </Button>
                     </div>
 
+                    {recipeDetails.data.nutrition && (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {[
+                          { label: 'Calories', value: recipeDetails.data.nutrition.calories },
+                          { label: 'Protein', value: recipeDetails.data.nutrition.protein },
+                          { label: 'Carbs', value: recipeDetails.data.nutrition.carbs },
+                          { label: 'Fat', value: recipeDetails.data.nutrition.fat },
+                        ].map(n => (
+                          <div key={n.label} className="rounded-lg bg-muted p-3 text-center">
+                            <div className="text-sm font-bold">{n.value}</div>
+                            <div className="text-xs text-muted-foreground">{n.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {recipeDetails.data.nutrition && (
+                      <p className="text-xs text-muted-foreground flex items-center gap-1 -mt-4">
+                        <Flame className="h-3 w-3" /> Approximate, per serving.
+                      </p>
+                    )}
+
                     <div>
-                      <h3 className="font-headline text-xl mb-3 flex items-center gap-2">
-                        <BookOpen className="h-5 w-5" /> Ingredients
-                      </h3>
-                      <ul className="list-disc list-inside space-y-1 font-body columns-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <h3 className="font-headline text-xl flex items-center gap-2">
+                          <BookOpen className="h-5 w-5" /> Ingredients
+                        </h3>
+                        <div className="flex items-center gap-3">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={toggleMetric}
+                            title="Toggle units"
+                          >
+                            {useMetric ? 'Metric (g/ml/°C)' : 'US (cups/oz/°F)'}
+                          </Button>
+                          {recipeDetails.data.servings != null && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-muted-foreground">Servings</span>
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={() =>
+                                  setDesiredServings(s =>
+                                    Math.max(1, (s ?? recipeDetails.data!.servings) - 1)
+                                  )
+                                }
+                              >
+                                <Minus className="h-4 w-4" />
+                              </Button>
+                              <span className="w-6 text-center font-bold">
+                                {desiredServings ?? recipeDetails.data.servings}
+                              </span>
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={() =>
+                                  setDesiredServings(s => (s ?? recipeDetails.data!.servings) + 1)
+                                }
+                              >
+                                <Plus className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <ul className="list-disc list-inside space-y-1 font-body columns-1 sm:columns-2">
                         {recipeDetails.data.ingredients.map((item, index) => (
-                          <li key={index}>{item}</li>
+                          <li key={index}>
+                            {convertToMetric(
+                              scaleIngredient(
+                                item,
+                                (desiredServings ?? (recipeDetails.data!.servings || 1)) /
+                                  (recipeDetails.data!.servings || 1)
+                              )
+                            )}
+                          </li>
                         ))}
                       </ul>
                     </div>
@@ -1568,7 +2011,7 @@ function RecipeSavvyContent() {
                       <ol className="list-decimal list-inside space-y-3 font-body">
                         {recipeDetails.data.instructions.map((step, index) => (
                           <li key={index} className="pl-2">
-                            {step}
+                            {convertToMetric(step)}
                           </li>
                         ))}
                       </ol>
@@ -1605,7 +2048,7 @@ function RecipeSavvyContent() {
               <CardHeader>
                 <div className="flex justify-between items-center">
                     <button onClick={() => setView('details')} className="text-left hover:underline">
-                        <CardTitle className="font-headline text-3xl">
+                        <CardTitle className="font-headline text-2xl sm:text-3xl">
                         {selectedRecipe}
                         </CardTitle>
                         <CardDescription>
@@ -1621,7 +2064,7 @@ function RecipeSavvyContent() {
               </CardHeader>
               <CardContent className="space-y-6">
                 <p className="text-lg font-body leading-relaxed">
-                  {recipeDetails.data!.instructions[currentStep]}
+                  {convertToMetric(recipeDetails.data!.instructions[currentStep])}
                 </p>
 
                 {currentStepDescription?.isLoading && (
@@ -1708,7 +2151,7 @@ function RecipeSavvyContent() {
                     <div className="flex justify-center mb-4">
                       <PartyPopper className="h-16 w-16 text-accent" />
                     </div>
-                    <CardTitle className="font-headline text-4xl">Enjoy Your Meal!</CardTitle>
+                    <CardTitle className="font-headline text-3xl sm:text-4xl">Enjoy Your Meal!</CardTitle>
                     <CardDescription className="pt-2">You've successfully cooked {selectedRecipe}!</CardDescription>
                   </CardHeader>
                   <CardContent className="mt-6">
@@ -1757,15 +2200,15 @@ function RecipeSavvyContent() {
   return (
     <>
       <div className="flex flex-col min-h-screen bg-background">
-        <header ref={topRef} className="container mx-auto px-4 pt-8 pb-4">
-          <div className="flex items-center justify-between">
-            <button onClick={handleStartOver} className="flex items-center justify-center gap-4 text-center">
-              <ChefHat className="h-12 w-12 text-primary" />
-              <div>
-                <h1 className="text-5xl font-headline text-primary-foreground tracking-wider">
+        <header ref={topRef} className="container mx-auto px-4 pt-5 pb-4 sm:pt-8">
+          <div className="flex items-center justify-between gap-2">
+            <button onClick={handleStartOver} className="flex items-center gap-2 text-left sm:gap-3">
+              <ChefHat className="h-7 w-7 text-primary shrink-0 sm:h-9 sm:w-9" />
+              <div className="leading-tight">
+                <h1 className="text-2xl font-headline text-primary-foreground tracking-tight sm:text-3xl">
                   RecipeSavvy
                 </h1>
-                <p className="text-muted-foreground font-body">
+                <p className="text-xs text-muted-foreground font-body sm:text-sm">
                   Your AI-powered recipe assistant
                 </p>
               </div>
@@ -1841,7 +2284,7 @@ function RecipeSavvyContent() {
           </div>
         </header>
 
-        <main className="flex-grow container mx-auto px-4 py-8">
+        <main className="flex-grow container mx-auto px-4 py-4 sm:py-8">
           <div className="max-w-3xl mx-auto">
             <AnimatePresence mode="wait">
               {renderContent()}
@@ -1973,6 +2416,45 @@ function RecipeSavvyContent() {
           </AlertDialogContent>
       </AlertDialog>
       <AuthDialog isOpen={isAuthDialogOpen} onOpenChange={setIsAuthDialogOpen} />
+
+      <Dialog open={isCameraOpen} onOpenChange={(open) => { if (!open) closeCamera(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Scan your pantry</DialogTitle>
+            <DialogDescription>
+              Point the camera at your fridge or pantry and capture one or more shots.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <video
+              ref={videoRef}
+              playsInline
+              muted
+              className="w-full rounded-lg bg-black aspect-video object-cover"
+            />
+            {capturedShots.length > 0 && (
+              <div className="flex gap-2 flex-wrap">
+                {capturedShots.map((shot, i) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img key={i} src={shot} alt={`Shot ${i + 1}`} className="h-16 w-16 rounded object-cover border" />
+                ))}
+              </div>
+            )}
+          </div>
+          <DialogFooter className="flex-row justify-between gap-2 sm:justify-between">
+            <Button variant="outline" onClick={captureShot}>
+              <Camera className="mr-2 h-4 w-4" /> Capture ({capturedShots.length})
+            </Button>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={closeCamera}>Cancel</Button>
+              <Button onClick={finishCamera} disabled={capturedShots.length === 0 || isScanningPantry}>
+                {isScanningPantry ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Scan {capturedShots.length || ''} photo{capturedShots.length === 1 ? '' : 's'}
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
