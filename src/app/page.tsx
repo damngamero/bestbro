@@ -88,9 +88,9 @@ import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { AuthDialog } from '@/components/auth-dialog';
 
-type ModelId = 'googleai/gemini-3.5-flash' | 'googleai/gemini-3.1-flash-lite' | 'googleai/gemma-4-31b-it';
+type ModelId = 'googleai/gemini-3.5-flash' | 'googleai/gemini-3.1-flash-lite';
 
-const VALID_MODELS: ModelId[] = ['googleai/gemini-3.5-flash', 'googleai/gemini-3.1-flash-lite', 'googleai/gemma-4-31b-it'];
+const VALID_MODELS: ModelId[] = ['googleai/gemini-3.5-flash', 'googleai/gemini-3.1-flash-lite'];
 
 type StepDescription = {
   isLoading: boolean;

@@ -21,7 +21,7 @@ import { LoaderCircle, Save } from "lucide-react"
 import { type RecipeDetailsOutput } from "@/ai/flows/generate-recipe-details"
 import { type RecipeVariationOutput } from "@/ai/flows/generate-recipe-variation"
 
-type ModelId = 'googleai/gemini-3.5-flash' | 'googleai/gemini-3.1-flash-lite' | 'googleai/gemma-4-31b-it';
+type ModelId = 'googleai/gemini-3.5-flash' | 'googleai/gemini-3.1-flash-lite';
 
 interface VariationDialogProps {
   isOpen: boolean
